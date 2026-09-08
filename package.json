@@ -1,0 +1,23 @@
+{
+  "name": "pbb_ar",
+  "version": "1.0.0",
+  "description": "CodeIgniter is a PHP full-stack web framework that is light, fast, flexible and secure. More information can be found at the [official site](https://codeigniter.com).",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "build": "postcss resources/css/app.css -o public/css/app.css",
+    "watch": "postcss resources/css/app.css -o public/css/app.css --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "postcss": "^8.5.19",
+    "postcss-cli": "^11.0.1",
+    "tailwindcss": "^4.3.3"
+  }
+}
