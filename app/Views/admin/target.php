@@ -26,11 +26,15 @@
         height: 40px !important;
         right: 10px !important;
     }
+    .select2-container {
+        width: 100% !important;
+    }
     .select2-dropdown {
         background-color: #0f172a !important;
         border-color: #334155 !important;
         border-radius: 1rem !important;
         overflow: hidden;
+        z-index: 9999 !important;
     }
     .select2-search__field {
         background-color: #1e293b !important; /* Slate 800 */
@@ -253,7 +257,7 @@
             <!-- Pilih Kecamatan (untuk menyaring desa) -->
             <div class="space-y-1.5" id="form-kec-container">
                 <label for="form-modal-kec" class="text-xs font-semibold text-slate-300">Pilih Kecamatan</label>
-                <select id="form-modal-kec" class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer">
+                <select id="form-modal-kec" class="w-full select2-el" style="width: 100%;">
                     <option value="">-- Pilih Kecamatan --</option>
                     <?php foreach ($kecamatans as $kec): ?>
                         <option value="<?= $kec['kecamatan_id'] ?>"><?= esc($kec['nm_kecamatan']) ?></option>
@@ -264,7 +268,7 @@
             <!-- Pilih Desa (searchable Select2 dropdown) -->
             <div class="space-y-1.5" id="form-desa-container">
                 <label for="form-desa" class="text-xs font-semibold text-slate-300">Pilih Desa <span class="text-rose-500">*</span></label>
-                <select id="form-desa" name="desa_id" required class="w-full select2-el" style="width: 100%;" disabled>
+                <select id="form-desa" name="desa_id" class="w-full select2-el" style="width: 100%;" disabled>
                     <option value="">-- Pilih Desa --</option>
                 </select>
             </div>
@@ -334,39 +338,51 @@
     // Initialize Select2 searchable dropdown
     $(document).ready(function() {
         $('.select2-el').select2({
-            dropdownParent: $('#target-modal')
+            dropdownParent: $('#target-modal'),
+            width: '100%'
+        });
+
+        // Handle kecamatan changes inside modal to filter village list
+        $('#form-modal-kec').on('change', async function() {
+            const kecId = $(this).val();
+            await loadDesasForModal(kecId);
+        });
+
+        // Form submit validation
+        $('#target-modal form').on('submit', function(e) {
+            if (!formTargetId.value) { // only in add mode
+                const desaId = $('#form-desa').val();
+                if (!desaId) {
+                    e.preventDefault();
+                    alert('Silakan pilih Desa terlebih dahulu.');
+                    $('#form-desa').select2('open');
+                    return false;
+                }
+            }
         });
     });
 
-    // Handle kecamatan changes inside modal to filter village list
-    formKecSelect.addEventListener('change', async (e) => {
-        const kecId = e.target.value;
-        await loadDesasForModal(kecId);
-    });
-
     async function loadDesasForModal(kecId, selectedDesaId = null) {
-        formDesaSelect.innerHTML = '<option value="">-- Pilih Desa --</option>';
+        const $desa = $('#form-desa');
+        $desa.empty();
+        $desa.append(new Option('-- Pilih Desa --', '', true, !selectedDesaId));
+
         if (!kecId) {
-            formDesaSelect.disabled = true;
-            $(formDesaSelect).val('').trigger('change');
+            $desa.prop('disabled', true);
+            $desa.val('').trigger('change.select2');
             return;
         }
-        formDesaSelect.disabled = false;
+        $desa.prop('disabled', false);
         try {
             const response = await fetch(`<?= base_url('admin/kolektor/get-desas') ?>?kecamatan_id=${kecId}`);
             if (!response.ok) throw new Error();
             const desas = await response.json();
             desas.forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.desa_id;
-                opt.textContent = d.nm_desa;
-                if (selectedDesaId && d.desa_id == selectedDesaId) {
-                    opt.selected = true;
-                }
-                formDesaSelect.appendChild(opt);
+                const isSelected = (selectedDesaId && String(d.desa_id) === String(selectedDesaId));
+                $desa.append(new Option(d.nm_desa, d.desa_id, false, isSelected));
             });
             // Update Select2 UI
-            $(formDesaSelect).trigger('change');
+            $desa.val(selectedDesaId || '').trigger('change.select2');
         } catch(e) {
             console.error('Error fetching desas for modal', e);
         }
@@ -375,10 +391,14 @@
     function openAddModal() {
         formTargetId.value = '';
         formYearSelect.value = '<?= $selectedYear ?>';
-        formKecSelect.value = '';
-        formDesaSelect.innerHTML = '<option value="">-- Pilih Desa --</option>';
-        formDesaSelect.disabled = true;
-        $(formDesaSelect).val('').trigger('change');
+        $('#form-modal-kec').val('').trigger('change.select2');
+        
+        const $desa = $('#form-desa');
+        $desa.empty();
+        $desa.append(new Option('-- Pilih Desa --', '', true, true));
+        $desa.prop('disabled', true);
+        $desa.val('').trigger('change.select2');
+
         formNominalInput.value = '';
         formNopInput.value = '';
 
@@ -390,7 +410,6 @@
 
         // Enable inputs
         formYearSelect.disabled = false;
-        formDesaSelect.disabled = false;
 
         modalTitleText.textContent = 'Penetapan Target Baru';
         targetModal.classList.remove('hidden');
@@ -446,7 +465,7 @@
             // (Even though backend will just update the amount based on target_id)
             formYearSelect.disabled = true; // disable to prevent modifications
             formDesaSelect.innerHTML = `<option value="${targetData.desa_id}" selected>Selected</option>`;
-            $(formDesaSelect).trigger('change');
+            $(formDesaSelect).trigger('change.select2');
 
             modalTitleText.textContent = 'Edit Jumlah Target';
             targetModal.classList.remove('hidden');

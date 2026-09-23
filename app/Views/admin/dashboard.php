@@ -237,8 +237,13 @@
                                             data-kec-parent="<?= $kecId ?>"
                                             data-desa-parent="<?= $dId ?>">
                                             <td class="py-2.5 px-4 pl-20 flex items-center text-slate-400">
-                                                <i class="fa-solid fa-circle-user text-indigo-400/60 mr-2 text-xs"></i>
-                                                <span class="text-xs font-medium text-slate-300"><?= esc($kolektor['name']) ?></span>
+                                                <?php if (strpos($kolektor['name'], 'Non-Kolektor') !== false || strpos($kolektor['name'], 'Langsung') !== false): ?>
+                                                    <i class="fa-solid fa-building-columns text-amber-400/80 mr-2 text-xs"></i>
+                                                    <span class="text-xs font-semibold text-amber-300"><?= esc($kolektor['name']) ?></span>
+                                                <?php else: ?>
+                                                    <i class="fa-solid fa-circle-user text-indigo-400/60 mr-2 text-xs"></i>
+                                                    <span class="text-xs font-medium text-slate-300"><?= esc($kolektor['name']) ?></span>
+                                                <?php endif; ?>
                                             </td>
                                             <td class="py-2.5 px-4 text-center text-slate-600 text-xs font-mono">-</td>
                                             <td class="py-2.5 px-4 text-right text-emerald-400 font-semibold text-xs font-mono">Rp <?= number_format($kolektor['realisasi'], 0, ',', '.') ?></td>

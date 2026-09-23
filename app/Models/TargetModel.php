@@ -28,8 +28,7 @@ class TargetModel extends Model
         // 2. Get realisations per kecamatan from trn_realisasi_dsh
         $realisations = $this->db->table('trn_realisasi_dsh r')
             ->select('d.kecamatan_id, SUM(r.realisasi) as total_realisasi')
-            ->join('mst_kolektor c', 'r.kolektor_id = c.kolektor_id')
-            ->join('mst_desa d', 'c.desa_id = d.desa_id')
+            ->join('mst_desa d', 'r.desa_id = d.desa_id')
             ->where('r.tahun', $tahun)
             ->groupBy('d.kecamatan_id')
             ->get()

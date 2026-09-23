@@ -111,13 +111,12 @@ class Admin extends BaseController
         // Realisasi calculation from trn_realisasi_dsh
         $realBuilder = $this->db->table('trn_realisasi_dsh r')
             ->select('SUM(r.realisasi) as realisasi')
-            ->join('mst_kolektor c', 'r.kolektor_id = c.kolektor_id')
-            ->join('mst_desa d', 'c.desa_id = d.desa_id')
             ->where('r.tahun', $selectedYear);
         if ($desaId) {
-            $realBuilder->where('d.desa_id', $desaId);
+            $realBuilder->where('r.desa_id', $desaId);
         } elseif ($kecId) {
-            $realBuilder->where('d.kecamatan_id', $kecId);
+            $realBuilder->join('mst_desa d', 'r.desa_id = d.desa_id')
+                ->where('d.kecamatan_id', $kecId);
         }
         $realRow = $realBuilder->get()->getRowArray();
         $totalRealisasi = (float)($realRow['realisasi'] ?? 0);
@@ -153,6 +152,19 @@ class Admin extends BaseController
         
         $colRealArray = $colRealBuilder->get()->getResultArray();
 
+        // 3. Get non-collector realisations per desa for the selected year
+        $nonColRealRows = $this->db->table('trn_realisasi_dsh')
+            ->select('desa_id, SUM(realisasi) as total_setor')
+            ->where('kolektor_id IS NULL')
+            ->where('tahun', $selectedYear)
+            ->groupBy('desa_id')
+            ->get()
+            ->getResultArray();
+        $nonColRealMap = [];
+        foreach ($nonColRealRows as $ncr) {
+            $nonColRealMap[$ncr['desa_id']] = (float)$ncr['total_setor'];
+        }
+
         // Build Tree structure
         $drilldown = [];
         foreach ($desaTargets as $dt) {
@@ -179,21 +191,29 @@ class Admin extends BaseController
                 }
             }
 
-            $numCollectors = count($collectorsInDesa);
             $desaTarget = (float)$dt['target'];
             $desaRealisasi = 0.0;
-            foreach ($collectorsInDesa as $col) {
-                $desaRealisasi += (float)($col['total_setor'] ?? 0.0);
-            }
 
             $kolektorsMapped = [];
             foreach ($collectorsInDesa as $col) {
                 $colRealisasi = (float)($col['total_setor'] ?? 0.0);
+                $desaRealisasi += $colRealisasi;
                 
                 $kolektorsMapped[] = [
                     'id' => $col['kolektor_id'],
                     'name' => $col['nm_kolektor'],
                     'realisasi' => $colRealisasi,
+                ];
+            }
+
+            // Include non-collector setoran for this desa if any
+            $nonColAmount = (float)($nonColRealMap[$dId] ?? 0.0);
+            if ($nonColAmount > 0) {
+                $desaRealisasi += $nonColAmount;
+                $kolektorsMapped[] = [
+                    'id' => null,
+                    'name' => 'Setoran Langsung (Tanpa Kolektor)',
+                    'realisasi' => $nonColAmount,
                 ];
             }
 
@@ -535,8 +555,7 @@ class Admin extends BaseController
             ->select('t.target_id, t.desa_id, t.target, t.nop, t.tahun, d.nm_desa, k.nm_kecamatan,
                       (SELECT COALESCE(SUM(r.realisasi), 0) 
                        FROM trn_realisasi_dsh r 
-                       JOIN mst_kolektor c ON r.kolektor_id = c.kolektor_id 
-                       WHERE c.desa_id = t.desa_id AND r.tahun = t.tahun) as realisasi')
+                       WHERE r.desa_id = t.desa_id AND r.tahun = t.tahun) as realisasi')
             ->join('mst_desa d', 't.desa_id = d.desa_id')
             ->join('mst_kecamatan k', 'd.kecamatan_id = k.kecamatan_id')
             ->where('t.tahun', $selectedYear);
@@ -673,9 +692,13 @@ class Admin extends BaseController
             $filterYear = $currentYear;
         }
 
+        // Fetch kecamatans and desas for the form dropdowns
+        $kecamatans = $this->db->table('mst_kecamatan')->orderBy('nm_kecamatan', 'ASC')->get()->getResultArray();
+        $allDesas = $this->db->table('mst_desa')->orderBy('nm_desa', 'ASC')->get()->getResultArray();
+
         // Fetch collectors with their villages for dropdown
         $kolektorsSelect = $this->db->table('mst_kolektor c')
-            ->select('c.kolektor_id, c.nm_kolektor, c.tahun, d.nm_desa')
+            ->select('c.kolektor_id, c.nm_kolektor, c.desa_id, c.tahun, d.nm_desa')
             ->join('mst_desa d', 'c.desa_id = d.desa_id')
             ->orderBy('c.tahun', 'DESC')
             ->orderBy('c.nm_kolektor', 'ASC')
@@ -683,13 +706,20 @@ class Admin extends BaseController
             ->getResultArray();
 
         $builder = $this->db->table('trn_realisasi_dsh r')
-            ->select('r.*, c.nm_kolektor, c.tahun as kolektor_tahun, d.nm_desa, k.nm_kecamatan')
-            ->join('mst_kolektor c', 'r.kolektor_id = c.kolektor_id')
-            ->join('mst_desa d', 'c.desa_id = d.desa_id')
-            ->join('mst_kecamatan k', 'd.kecamatan_id = k.kecamatan_id');
+            ->select('r.*, c.nm_kolektor, c.tahun as kolektor_tahun, d.nm_desa, d.kecamatan_id, k.nm_kecamatan')
+            ->join('mst_desa d', 'r.desa_id = d.desa_id')
+            ->join('mst_kecamatan k', 'd.kecamatan_id = k.kecamatan_id')
+            ->join('mst_kolektor c', 'r.kolektor_id = c.kolektor_id', 'left');
 
         if (!empty($search)) {
-            $builder->like('c.nm_kolektor', $search);
+            $builder->groupStart()
+                ->like('c.nm_kolektor', $search)
+                ->orLike('d.nm_desa', $search)
+                ->orLike('k.nm_kecamatan', $search);
+            if (stripos($search, 'non') !== false || stripos($search, 'tanpa') !== false || stripos($search, 'langsung') !== false) {
+                $builder->orWhere('r.kolektor_id IS NULL');
+            }
+            $builder->groupEnd();
         }
 
         if (!empty($filterMonth)) {
@@ -749,6 +779,8 @@ class Admin extends BaseController
 
         return view('admin/setor', [
             'setorans' => $setorans,
+            'kecamatans' => $kecamatans,
+            'allDesas' => $allDesas,
             'kolektors' => $kolektorsSelect,
             'months' => $months,
             'paymentYears' => $paymentYears,
@@ -766,14 +798,20 @@ class Admin extends BaseController
     public function saveSetor()
     {
         $id = $this->request->getPost('realisasi_dsh_id');
-        $tglBayar = $this->request->getPost('tgl_bayar');
+        $desaId = $this->request->getPost('desa_id');
         $kolektorId = $this->request->getPost('kolektor_id');
+        if (empty($kolektorId)) {
+            $kolektorId = null;
+        } else {
+            $kolektorId = (int)$kolektorId;
+        }
         $jmlOp = $this->request->getPost('jml_op');
         if ($jmlOp === null || $jmlOp === '') {
             $jmlOp = $this->request->getPost('nop');
         }
         $nominal = $this->request->getPost('realisasi');
         $tahun = $this->request->getPost('tahun');
+        $tglBayar = $this->request->getPost('tgl_bayar');
 
         if (empty($tahun)) {
             $tahun = !empty($tglBayar) ? (int)date('Y', strtotime($tglBayar)) : (int)date('Y');
@@ -781,12 +819,21 @@ class Admin extends BaseController
             $tahun = (int)$tahun;
         }
 
-        if (empty($tglBayar) || empty($kolektorId) || $jmlOp === null || $jmlOp === '' || empty($nominal) || empty($tahun)) {
-            return redirect()->back()->with('error', 'Semua data wajib diisi.')->withInput();
+        // If desa_id not provided directly, infer from collector
+        if (empty($desaId) && !empty($kolektorId)) {
+            $col = $this->db->table('mst_kolektor')->where('kolektor_id', $kolektorId)->get()->getRowArray();
+            if ($col) {
+                $desaId = $col['desa_id'];
+            }
+        }
+
+        if (empty($tglBayar) || empty($desaId) || $jmlOp === null || $jmlOp === '' || empty($nominal) || empty($tahun)) {
+            return redirect()->back()->with('error', 'Desa, Tanggal Bayar, Jumlah OP, Nominal, dan Tahun Pajak wajib diisi.')->withInput();
         }
 
         $nominal = (float)$nominal;
         $jmlOp = (int)$jmlOp;
+        $desaId = (int)$desaId;
 
         // Start transaction
         $this->db->transStart();
@@ -796,14 +843,15 @@ class Admin extends BaseController
             // 1. Fetch old record
             $oldSetor = $this->db->table('trn_realisasi_dsh')->where('realisasi_dsh_id', $id)->get()->getRowArray();
             if ($oldSetor) {
-                $oldKolektorId = $oldSetor['kolektor_id'];
                 $oldNominal = (float)$oldSetor['realisasi'];
                 $oldTahun = (int)($oldSetor['tahun'] ?? date('Y', strtotime($oldSetor['tgl_bayar'])));
+                $oldDesaId = $oldSetor['desa_id'] ?? null;
+                if (!$oldDesaId && !empty($oldSetor['kolektor_id'])) {
+                    $oldCollector = $this->db->table('mst_kolektor')->where('kolektor_id', $oldSetor['kolektor_id'])->get()->getRowArray();
+                    $oldDesaId = $oldCollector['desa_id'] ?? null;
+                }
 
-                // Deduct old nominal from old trn_target
-                $oldCollector = $this->db->table('mst_kolektor')->where('kolektor_id', $oldKolektorId)->get()->getRowArray();
-                if ($oldCollector) {
-                    $oldDesaId = $oldCollector['desa_id'];
+                if ($oldDesaId) {
                     $oldTargetEntry = $this->db->table('trn_target')
                         ->where(['desa_id' => $oldDesaId, 'tahun' => $oldTahun])
                         ->get()
@@ -820,6 +868,7 @@ class Admin extends BaseController
             $this->db->table('trn_realisasi_dsh')
                 ->where('realisasi_dsh_id', $id)
                 ->update([
+                    'desa_id'     => $desaId,
                     'kolektor_id' => $kolektorId,
                     'tahun'       => $tahun,
                     'jml_op'      => $jmlOp,
@@ -832,6 +881,7 @@ class Admin extends BaseController
             // Insert Mode
             // 1. Insert setoran record
             $this->db->table('trn_realisasi_dsh')->insert([
+                'desa_id'     => $desaId,
                 'kolektor_id' => $kolektorId,
                 'tahun'       => $tahun,
                 'jml_op'      => $jmlOp,
@@ -841,29 +891,24 @@ class Admin extends BaseController
             $msg = 'Setoran berhasil dicatat dan ditambahkan ke realisasi desa.';
         }
 
-        // 3. Update/Insert new trn_target (increment realisasi)
-        $collector = $this->db->table('mst_kolektor')->where('kolektor_id', $kolektorId)->get()->getRowArray();
-        if ($collector) {
-            $desaId = $collector['desa_id'];
-            $targetEntry = $this->db->table('trn_target')
-                ->where(['desa_id' => $desaId, 'tahun' => $tahun])
-                ->get()
-                ->getRowArray();
+        // 3. Update/Insert new trn_target (increment realisasi) directly for $desaId
+        $targetEntry = $this->db->table('trn_target')
+            ->where(['desa_id' => $desaId, 'tahun' => $tahun])
+            ->get()
+            ->getRowArray();
 
-            if ($targetEntry) {
-                $this->db->table('trn_target')
-                    ->where('target_id', $targetEntry['target_id'])
-                    ->increment('realisasi', $nominal);
-            } else {
-                // If it doesn't exist, insert a default target entry with 0 target and the nominal as realisasi
-                $this->db->table('trn_target')->insert([
-                    'desa_id'   => $desaId,
-                    'target'    => 0,
-                    'nop'       => 0,
-                    'realisasi' => $nominal,
-                    'tahun'     => $tahun
-                ]);
-            }
+        if ($targetEntry) {
+            $this->db->table('trn_target')
+                ->where('target_id', $targetEntry['target_id'])
+                ->increment('realisasi', $nominal);
+        } else {
+            $this->db->table('trn_target')->insert([
+                'desa_id'   => $desaId,
+                'target'    => 0,
+                'nop'       => 0,
+                'realisasi' => $nominal,
+                'tahun'     => $tahun
+            ]);
         }
 
         $this->db->transComplete();
@@ -890,15 +935,15 @@ class Admin extends BaseController
 
         $setor = $this->db->table('trn_realisasi_dsh')->where('realisasi_dsh_id', $id)->get()->getRowArray();
         if ($setor) {
-            $kolektorId = $setor['kolektor_id'];
             $nominal = (float)$setor['realisasi'];
             $tahun = (int)($setor['tahun'] ?? date('Y', strtotime($setor['tgl_bayar'])));
+            $desaId = $setor['desa_id'] ?? null;
+            if (!$desaId && !empty($setor['kolektor_id'])) {
+                $collector = $this->db->table('mst_kolektor')->where('kolektor_id', $setor['kolektor_id'])->get()->getRowArray();
+                $desaId = $collector['desa_id'] ?? null;
+            }
 
-            // Find desa_id of collector
-            $collector = $this->db->table('mst_kolektor')->where('kolektor_id', $kolektorId)->get()->getRowArray();
-            if ($collector) {
-                $desaId = $collector['desa_id'];
-                
+            if ($desaId) {
                 // Deduct from trn_target realisasi
                 $targetEntry = $this->db->table('trn_target')
                     ->where(['desa_id' => $desaId, 'tahun' => $tahun])
@@ -1175,7 +1220,7 @@ class Admin extends BaseController
             $dataReport = $this->db->table('mst_kecamatan k')
                 ->select('k.kecamatan_id, k.kd_kecamatan, k.nm_kecamatan, k.nm_camat, k.norek_camat,
                           COALESCE((SELECT SUM(t.target) FROM trn_target t JOIN mst_desa d ON t.desa_id = d.desa_id WHERE d.kecamatan_id = k.kecamatan_id AND t.tahun = ' . $selectedYear . '), 0) as target,
-                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r JOIN mst_kolektor c ON r.kolektor_id = c.kolektor_id JOIN mst_desa d ON c.desa_id = d.desa_id WHERE d.kecamatan_id = k.kecamatan_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
+                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r JOIN mst_desa d ON r.desa_id = d.desa_id WHERE d.kecamatan_id = k.kecamatan_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
                 ->orderBy('k.nm_kecamatan', 'ASC')
                 ->get()
                 ->getResultArray();
@@ -1184,7 +1229,7 @@ class Admin extends BaseController
             $dataReport = $this->db->table('mst_desa d')
                 ->select('d.desa_id, d.kd_desa, d.nm_desa, d.nm_kepala_desa, d.norek_kepala_desa, d.nm_koordinator, d.norek_koordinator, k.nm_kecamatan, k.kd_kecamatan,
                           COALESCE((SELECT t.target FROM trn_target t WHERE t.desa_id = d.desa_id AND t.tahun = ' . $selectedYear . '), 0) as target,
-                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r JOIN mst_kolektor c ON r.kolektor_id = c.kolektor_id WHERE c.desa_id = d.desa_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
+                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r WHERE r.desa_id = d.desa_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
                 ->join('mst_kecamatan k', 'd.kecamatan_id = k.kecamatan_id')
                 ->orderBy('k.nm_kecamatan', 'ASC')
                 ->orderBy('d.nm_desa', 'ASC')
@@ -1225,6 +1270,7 @@ class Admin extends BaseController
 
             $realisations = $this->db->table('trn_realisasi_dsh')
                 ->select('kolektor_id, SUM(realisasi) as total_realisasi')
+                ->where('kolektor_id IS NOT NULL')
                 ->where('tahun', $selectedYear)
                 ->groupBy('kolektor_id')
                 ->get()
@@ -1296,7 +1342,7 @@ class Admin extends BaseController
             $dataReport = $this->db->table('mst_kecamatan k')
                 ->select('k.kecamatan_id, k.kd_kecamatan, k.nm_kecamatan, k.nm_camat, k.norek_camat,
                           COALESCE((SELECT SUM(t.target) FROM trn_target t JOIN mst_desa d ON t.desa_id = d.desa_id WHERE d.kecamatan_id = k.kecamatan_id AND t.tahun = ' . $selectedYear . '), 0) as target,
-                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r JOIN mst_kolektor c ON r.kolektor_id = c.kolektor_id JOIN mst_desa d ON c.desa_id = d.desa_id WHERE d.kecamatan_id = k.kecamatan_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
+                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r JOIN mst_desa d ON r.desa_id = d.desa_id WHERE d.kecamatan_id = k.kecamatan_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
                 ->orderBy('k.nm_kecamatan', 'ASC')
                 ->get()
                 ->getResultArray();
@@ -1304,7 +1350,7 @@ class Admin extends BaseController
             $dataReport = $this->db->table('mst_desa d')
                 ->select('d.desa_id, d.kd_desa, d.nm_desa, d.nm_kepala_desa, d.norek_kepala_desa, d.nm_koordinator, d.norek_koordinator, k.nm_kecamatan, k.kd_kecamatan,
                           COALESCE((SELECT t.target FROM trn_target t WHERE t.desa_id = d.desa_id AND t.tahun = ' . $selectedYear . '), 0) as target,
-                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r JOIN mst_kolektor c ON r.kolektor_id = c.kolektor_id WHERE c.desa_id = d.desa_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
+                          COALESCE((SELECT SUM(r.realisasi) FROM trn_realisasi_dsh r WHERE r.desa_id = d.desa_id AND r.tahun = ' . $selectedYear . '), 0) as realisasi')
                 ->join('mst_kecamatan k', 'd.kecamatan_id = k.kecamatan_id')
                 ->orderBy('k.nm_kecamatan', 'ASC')
                 ->orderBy('d.nm_desa', 'ASC')
@@ -1345,6 +1391,7 @@ class Admin extends BaseController
 
             $realisations = $this->db->table('trn_realisasi_dsh')
                 ->select('kolektor_id, SUM(realisasi) as total_realisasi')
+                ->where('kolektor_id IS NOT NULL')
                 ->where('tahun', $selectedYear)
                 ->groupBy('kolektor_id')
                 ->get()

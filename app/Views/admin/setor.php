@@ -26,11 +26,15 @@
         height: 40px !important;
         right: 10px !important;
     }
+    .select2-container {
+        width: 100% !important;
+    }
     .select2-dropdown {
         background-color: #0f172a !important;
         border-color: #334155 !important;
         border-radius: 1rem !important;
         overflow: hidden;
+        z-index: 9999 !important;
     }
     .select2-search__field {
         background-color: #1e293b !important;
@@ -161,10 +165,17 @@
                                     <?= date('d-m-Y', strtotime($s['tgl_bayar'])) ?>
                                 </td>
                                 <td class="py-3.5 px-4">
-                                    <span class="font-bold text-white"><?= esc($s['nm_kolektor']) ?></span>
-                                    <span class="text-xs text-indigo-400 font-bold ml-1.5"><?= esc($s['nm_desa']) ?></span>
-                                    <?php if (!empty($s['kolektor_tahun'])): ?>
-                                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 ml-1">SK Th. <?= esc($s['kolektor_tahun']) ?></span>
+                                    <?php if (empty($s['kolektor_id'])): ?>
+                                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                            <i class="fa-solid fa-building-columns text-[10px]"></i> Non-Kolektor
+                                        </span>
+                                        <span class="text-xs text-indigo-400 font-bold ml-1.5"><?= esc($s['nm_desa']) ?></span>
+                                    <?php else: ?>
+                                        <span class="font-bold text-white"><?= esc($s['nm_kolektor']) ?></span>
+                                        <span class="text-xs text-indigo-400 font-bold ml-1.5"><?= esc($s['nm_desa']) ?></span>
+                                        <?php if (!empty($s['kolektor_tahun'])): ?>
+                                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 ml-1">SK Th. <?= esc($s['kolektor_tahun']) ?></span>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </td>
                                 <td class="py-3.5 px-4 text-center text-slate-300 font-mono text-xs font-semibold"><?= number_format($s['jml_op'] ?? $s['nop'] ?? 0, 0, ',', '.') ?></td>
@@ -176,7 +187,9 @@
                                             'realisasi_dsh_id' => $s['realisasi_dsh_id'],
                                             'tahun' => $s['tahun'],
                                             'tgl_bayar' => $s['tgl_bayar'],
-                                            'kolektor_id' => $s['kolektor_id'],
+                                            'kecamatan_id' => $s['kecamatan_id'],
+                                            'desa_id' => $s['desa_id'],
+                                            'kolektor_id' => $s['kolektor_id'] ?? '',
                                             'jml_op' => $s['jml_op'] ?? $s['nop'] ?? 0,
                                             'realisasi' => $s['realisasi']
                                         ]) ?>)' 
@@ -273,16 +286,33 @@
                 </div>
             </div>
 
-            <!-- Pilih Kolektor (searchable select dropdown) -->
+            <!-- Pilih Kecamatan & Desa (Cascading with Select2) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="space-y-1.5">
+                    <label for="form-kecamatan" class="text-xs font-semibold text-slate-300">Pilih Kecamatan <span class="text-rose-500">*</span></label>
+                    <select id="form-kecamatan" class="w-full select2-el" style="width: 100%;">
+                        <option value="">-- Pilih Kecamatan --</option>
+                        <?php foreach ($kecamatans as $kc): ?>
+                            <option value="<?= $kc['kecamatan_id'] ?>"><?= esc($kc['nm_kecamatan']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="space-y-1.5">
+                    <label for="form-desa" class="text-xs font-semibold text-slate-300">Pilih Desa <span class="text-rose-500">*</span></label>
+                    <select id="form-desa" name="desa_id" class="w-full select2-el" style="width: 100%;">
+                        <option value="">-- Pilih Kecamatan Dulu --</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Pilih Kolektor (searchable select dropdown, opsional) -->
             <div class="space-y-1.5">
-                <label for="form-kolektor" class="text-xs font-semibold text-slate-300">Pilih Kolektor (Nama - Desa) <span class="text-rose-500">*</span></label>
-                <select id="form-kolektor" name="kolektor_id" required class="w-full select2-el" style="width: 100%;">
-                    <option value="">-- Pilih Kolektor --</option>
-                    <?php foreach ($kolektors as $col): ?>
-                        <option value="<?= $col['kolektor_id'] ?>" data-tahun="<?= esc($col['tahun']) ?>">
-                            <?= esc($col['nm_kolektor']) ?> - <?= esc($col['nm_desa']) ?> (Th. <?= esc($col['tahun']) ?>)
-                        </option>
-                    <?php endforeach; ?>
+                <div class="flex items-center justify-between">
+                    <label for="form-kolektor" class="text-xs font-semibold text-slate-300">Pilih Kolektor</label>
+                    <span class="text-[11px] text-slate-400 italic">Opsional (bisa tanpa kolektor)</span>
+                </div>
+                <select id="form-kolektor" name="kolektor_id" class="w-full select2-el" style="width: 100%;">
+                    <option value="">-- Tanpa Kolektor / Setoran Langsung Desa --</option>
                 </select>
             </div>
 
@@ -331,19 +361,79 @@
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
+    const allDesas = <?= json_encode($allDesas) ?>;
+    const allKolektors = <?= json_encode($kolektors) ?>;
+
     const setorModal = document.getElementById('setor-modal');
     const modalTitleText = document.getElementById('modal-title-text');
     const formSetorId = document.getElementById('form-setor-id');
     const formTahunInput = document.getElementById('form-tahun');
+    const formKecamatanSelect = document.getElementById('form-kecamatan');
+    const formDesaSelect = document.getElementById('form-desa');
     const formKolektorSelect = document.getElementById('form-kolektor');
     const formNominalInput = document.getElementById('form-nominal');
     const formTglInput = document.getElementById('form-tgl');
     const formJmlOpInput = document.getElementById('form-jml-op');
 
+    // Populate Desa dropdown based on Kecamatan
+    function populateDesaDropdown(kecId, selectedDesaId = '') {
+        const $desa = $('#form-desa');
+        $desa.empty();
+
+        if (!kecId) {
+            $desa.append(new Option('-- Pilih Kecamatan Dulu --', '', true, true));
+            $desa.val('').trigger('change.select2');
+            populateKolektorDropdown('', '');
+            return;
+        }
+
+        $desa.append(new Option('-- Pilih Desa --', '', true, !selectedDesaId));
+
+        const filtered = allDesas.filter(d => String(d.kecamatan_id) === String(kecId));
+        filtered.forEach(d => {
+            const isSelected = (selectedDesaId && String(d.desa_id) === String(selectedDesaId));
+            $desa.append(new Option(d.nm_desa, d.desa_id, false, isSelected));
+        });
+
+        $desa.val(selectedDesaId || '').trigger('change.select2');
+        populateKolektorDropdown(selectedDesaId || '', '');
+    }
+
+    // Populate Kolektor dropdown based on Desa
+    function populateKolektorDropdown(desaId, selectedKolektorId = '') {
+        const $kolektor = $('#form-kolektor');
+        $kolektor.empty();
+        $kolektor.append(new Option('-- Tanpa Kolektor / Setoran Langsung Desa --', '', true, !selectedKolektorId));
+
+        if (desaId) {
+            const filtered = allKolektors.filter(k => String(k.desa_id) === String(desaId));
+            filtered.forEach(k => {
+                const isSelected = (selectedKolektorId && String(k.kolektor_id) === String(selectedKolektorId));
+                const label = `${k.nm_kolektor} (Th. ${k.tahun})`;
+                const opt = new Option(label, k.kolektor_id, false, isSelected);
+                $(opt).data('tahun', k.tahun);
+                $kolektor.append(opt);
+            });
+        }
+
+        $kolektor.val(selectedKolektorId || '').trigger('change.select2');
+    }
+
     // Initialize Select2 dropdown
     $(document).ready(function() {
         $('.select2-el').select2({
-            dropdownParent: $('#setor-modal')
+            dropdownParent: $('#setor-modal'),
+            width: '100%'
+        });
+
+        // Event listener on Kecamatan change
+        $('#form-kecamatan').on('change', function() {
+            populateDesaDropdown($(this).val());
+        });
+
+        // Event listener on Desa change
+        $('#form-desa').on('change', function() {
+            populateKolektorDropdown($(this).val());
         });
 
         // Auto-suggest collector year when selecting in add mode
@@ -356,6 +446,17 @@
                 }
             }
         });
+
+        // Form submit validation to ensure desa is chosen
+        $('#setor-modal form').on('submit', function(e) {
+            const desaId = $('#form-desa').val();
+            if (!desaId) {
+                e.preventDefault();
+                alert('Silakan pilih Desa terlebih dahulu.');
+                $('#form-desa').select2('open');
+                return false;
+            }
+        });
     });
 
     function openSetorModal() {
@@ -365,9 +466,9 @@
         formJmlOpInput.value = '';
         formNominalInput.value = '';
         
-        // Reset select2 value
-        $(formKolektorSelect).val('').trigger('change');
-        
+        $('#form-kecamatan').val('').trigger('change.select2');
+        populateDesaDropdown('');
+
         modalTitleText.textContent = 'Catat Setoran Baru';
         setorModal.classList.remove('hidden');
     }
@@ -379,9 +480,15 @@
         formJmlOpInput.value = data.jml_op || data.nop || '';
         formNominalInput.value = data.realisasi;
         
-        // Populate select2 and trigger change
-        $(formKolektorSelect).val(data.kolektor_id).trigger('change');
+        // 1. Set Kecamatan
+        $('#form-kecamatan').val(data.kecamatan_id).trigger('change.select2');
+
+        // 2. Populate Desa for this Kecamatan and set selected desa_id
+        populateDesaDropdown(data.kecamatan_id, data.desa_id);
         
+        // 3. Populate Kolektor for this Desa and set selected kolektor_id
+        populateKolektorDropdown(data.desa_id, data.kolektor_id || '');
+
         modalTitleText.textContent = 'Edit Data Setoran';
         setorModal.classList.remove('hidden');
     }

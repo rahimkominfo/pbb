@@ -4,6 +4,57 @@
 
 <?= $this->section('page_header') ?>Manajemen Data Kolektor<?= $this->endSection() ?>
 
+<?= $this->section('styles') ?>
+<!-- Include Select2 CSS via CDN -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<style>
+    .select2-container {
+        width: 100% !important;
+    }
+    .select2-container--default .select2-selection--single {
+        background-color: #0f172a !important; /* Slate 900 */
+        border-color: #334155 !important; /* Slate 700 */
+        border-radius: 1rem !important;
+        height: 42px !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        color: #f1f5f9 !important; /* Slate 100 */
+        font-size: 0.875rem !important;
+        padding-left: 1rem !important;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__arrow {
+        height: 40px !important;
+        right: 10px !important;
+    }
+    .select2-dropdown {
+        background-color: #0f172a !important;
+        border-color: #334155 !important;
+        border-radius: 1rem !important;
+        overflow: hidden;
+        z-index: 9999 !important;
+    }
+    .select2-search__field {
+        background-color: #1e293b !important;
+        border-color: #475569 !important;
+        color: #fff !important;
+        border-radius: 0.5rem !important;
+    }
+    .select2-container--default .select2-results__option--highlighted[aria-selected] {
+        background-color: #4f46e5 !important;
+    }
+    .select2-container--default .select2-results__option[aria-selected=true] {
+        background-color: #312e81 !important;
+        color: #fff !important;
+    }
+    .select2-results__option {
+        color: #cbd5e1 !important;
+        font-size: 0.875rem !important;
+    }
+</style>
+<?= $this->endSection() ?>
+
 <?= $this->section('content') ?>
 <div class="space-y-6">
 
@@ -237,8 +288,8 @@
                     <!-- Dropdown Pilih Kecamatan -->
                     <div class="space-y-1.5">
                         <label for="form-kec" class="text-xs font-semibold text-slate-300">Pilih Kecamatan</label>
-                        <select id="form-kec" class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer">
-                            <option value="">-- Kecamatan --</option>
+                        <select id="form-kec" class="w-full select2-el" style="width: 100%;">
+                            <option value="">-- Pilih Kecamatan --</option>
                             <?php foreach ($kecamatans as $kec): ?>
                                 <option value="<?= $kec['kecamatan_id'] ?>"><?= esc($kec['nm_kecamatan']) ?></option>
                             <?php endforeach; ?>
@@ -248,8 +299,8 @@
                     <!-- Dropdown Pilih Desa (dependent) -->
                     <div class="space-y-1.5">
                         <label for="form-desa" class="text-xs font-semibold text-slate-300">Pilih Desa <span class="text-rose-500">*</span></label>
-                        <select id="form-desa" name="desa_id" required class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer" disabled>
-                            <option value="">-- Desa --</option>
+                        <select id="form-desa" name="desa_id" class="w-full select2-el" style="width: 100%;" disabled>
+                            <option value="">-- Pilih Desa --</option>
                         </select>
                     </div>
                 </div>
@@ -377,6 +428,9 @@
 <?= $this->endSection() ?>
 
 <?= $this->section('scripts') ?>
+<!-- Include jQuery first, then Select2 JS via CDN -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
     const formModal = document.getElementById('form-modal');
     const copyModal = document.getElementById('copy-modal');
@@ -400,33 +454,56 @@
     const deleteKolektorId = document.getElementById('delete-kolektor-id');
     const deleteColNameSpan = document.getElementById('delete-col-name');
 
-    // Helper: Dynamic filtering of Desas based on selected Kecamatan inside modal
-    formKecSelect.addEventListener('change', async (e) => {
-        const kecId = e.target.value;
-        await loadDesasForModal(kecId);
-        await checkDuplicateCode();
+    // Initialize Select2 dropdown
+    $(document).ready(function() {
+        $('.select2-el').select2({
+            dropdownParent: $('#form-modal'),
+            width: '100%'
+        });
+
+        // Helper: Dynamic filtering of Desas based on selected Kecamatan inside modal
+        $('#form-kec').on('change', async function() {
+            const kecId = $(this).val();
+            await loadDesasForModal(kecId);
+            await checkDuplicateCode();
+        });
+
+        $('#form-desa').on('change', async function() {
+            await checkDuplicateCode();
+        });
+
+        // Form submit validation for desa_id
+        $('#form-modal form').on('submit', function(e) {
+            const desaId = $('#form-desa').val();
+            if (!desaId) {
+                e.preventDefault();
+                alert('Silakan pilih Desa terlebih dahulu.');
+                $('#form-desa').select2('open');
+                return false;
+            }
+        });
     });
 
     async function loadDesasForModal(kecId, selectedDesaId = null) {
-        formDesaSelect.innerHTML = '<option value="">-- Pilih Desa --</option>';
+        const $desa = $('#form-desa');
+        $desa.empty();
+        $desa.append(new Option('-- Pilih Desa --', '', true, !selectedDesaId));
+
         if (!kecId) {
-            formDesaSelect.disabled = true;
+            $desa.prop('disabled', true);
+            $desa.val('').trigger('change.select2');
             return;
         }
-        formDesaSelect.disabled = false;
+        $desa.prop('disabled', false);
         try {
             const response = await fetch(`<?= base_url('admin/kolektor/get-desas') ?>?kecamatan_id=${kecId}`);
             if (!response.ok) throw new Error();
             const desas = await response.json();
             desas.forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.desa_id;
-                opt.textContent = d.nm_desa;
-                if (selectedDesaId && d.desa_id == selectedDesaId) {
-                    opt.selected = true;
-                }
-                formDesaSelect.appendChild(opt);
+                const isSelected = (selectedDesaId && String(d.desa_id) === String(selectedDesaId));
+                $desa.append(new Option(d.nm_desa, d.desa_id, false, isSelected));
             });
+            $desa.val(selectedDesaId || '').trigger('change.select2');
         } catch(e) {
             console.error('Error fetching desas for modal', e);
         }
@@ -479,9 +556,14 @@
     function openAddModal() {
         formKolektorId.value = '';
         formTahunInput.value = '<?= $selectedYear ?>';
-        formKecSelect.value = '';
-        formDesaSelect.innerHTML = '<option value="">-- Pilih Desa --</option>';
-        formDesaSelect.disabled = true;
+        $('#form-kec').val('').trigger('change.select2');
+        
+        const $desa = $('#form-desa');
+        $desa.empty();
+        $desa.append(new Option('-- Pilih Desa --', '', true, true));
+        $desa.prop('disabled', true);
+        $desa.val('').trigger('change.select2');
+
         formKodeInput.value = '';
         formNamaInput.value = '';
         formDusunInput.value = '';
@@ -519,9 +601,13 @@
         formModal.classList.remove('hidden');
         
         if (colData.kecamatan_id) {
-            formKecSelect.value = colData.kecamatan_id;
+            $('#form-kec').val(colData.kecamatan_id).trigger('change.select2');
             await loadDesasForModal(colData.kecamatan_id, colData.desa_id);
             await checkDuplicateCode();
+        } else {
+            $('#form-kec').val('').trigger('change.select2');
+            const $desa = $('#form-desa');
+            $desa.empty().append(new Option('-- Pilih Desa --', '', true, true)).prop('disabled', true).trigger('change.select2');
         }
     }
 
