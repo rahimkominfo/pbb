@@ -30,7 +30,7 @@ class TargetModel extends Model
             ->select('d.kecamatan_id, SUM(r.realisasi) as total_realisasi')
             ->join('mst_kolektor c', 'r.kolektor_id = c.kolektor_id')
             ->join('mst_desa d', 'c.desa_id = d.desa_id')
-            ->where('YEAR(r.tgl_bayar)', $tahun)
+            ->where('r.tahun', $tahun)
             ->groupBy('d.kecamatan_id')
             ->get()
             ->getResultArray();

@@ -128,9 +128,10 @@
                 <thead>
                     <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase font-bold">
                         <th class="py-3.5 px-4 w-16 text-center">No</th>
-                        <th class="py-3.5 px-4 w-36">Tgl Bayar</th>
+                        <th class="py-3.5 px-4 w-24 text-center">Tahun</th>
+                        <th class="py-3.5 px-4 w-32">Tgl Bayar</th>
                         <th class="py-3.5 px-4">Nama Kolektor (Desa)</th>
-                        <th class="py-3.5 px-4 w-28 text-center">NOP</th>
+                        <th class="py-3.5 px-4 w-28 text-center">Jml OP</th>
                         <th class="py-3.5 px-4">Kecamatan</th>
                         <th class="py-3.5 px-4 text-right">Nominal Setor</th>
                         <th class="py-3.5 px-4 w-24 text-center">Aksi</th>
@@ -139,7 +140,7 @@
                 <tbody>
                     <?php if (empty($setorans)): ?>
                         <tr>
-                            <td colspan="7" class="py-8 text-center text-slate-500 font-medium">
+                            <td colspan="8" class="py-8 text-center text-slate-500 font-medium">
                                 <i class="fa-solid fa-receipt text-2xl block mb-2 text-slate-600"></i>
                                 Belum ada riwayat setoran terdaftar.
                             </td>
@@ -151,6 +152,11 @@
                         ?>
                             <tr class="border-b border-slate-800/60 hover:bg-slate-800/20 transition-colors duration-200">
                                 <td class="py-3.5 px-4 text-center text-slate-400 font-semibold"><?= $no++ ?></td>
+                                <td class="py-3.5 px-4 text-center">
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-bold font-mono bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                        <?= esc($s['tahun']) ?>
+                                    </span>
+                                </td>
                                 <td class="py-3.5 px-4 text-slate-300 font-semibold">
                                     <?= date('d-m-Y', strtotime($s['tgl_bayar'])) ?>
                                 </td>
@@ -158,19 +164,20 @@
                                     <span class="font-bold text-white"><?= esc($s['nm_kolektor']) ?></span>
                                     <span class="text-xs text-indigo-400 font-bold ml-1.5"><?= esc($s['nm_desa']) ?></span>
                                     <?php if (!empty($s['kolektor_tahun'])): ?>
-                                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 ml-1">Th. <?= esc($s['kolektor_tahun']) ?></span>
+                                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 ml-1">SK Th. <?= esc($s['kolektor_tahun']) ?></span>
                                     <?php endif; ?>
                                 </td>
-                                <td class="py-3.5 px-4 text-center text-slate-300 font-mono text-xs"><?= esc($s['nop']) ?></td>
+                                <td class="py-3.5 px-4 text-center text-slate-300 font-mono text-xs font-semibold"><?= number_format($s['jml_op'] ?? $s['nop'] ?? 0, 0, ',', '.') ?></td>
                                 <td class="py-3.5 px-4 text-slate-400 font-semibold text-xs"><?= esc($s['nm_kecamatan']) ?></td>
                                 <td class="py-3.5 px-4 text-right text-emerald-400 font-bold">Rp <?= number_format($s['realisasi'], 0, ',', '.') ?></td>
                                 <td class="py-3.5 px-4">
                                     <div class="flex items-center justify-center gap-1.5">
                                         <button onclick='openEditModal(<?= json_encode([
                                             'realisasi_dsh_id' => $s['realisasi_dsh_id'],
+                                            'tahun' => $s['tahun'],
                                             'tgl_bayar' => $s['tgl_bayar'],
                                             'kolektor_id' => $s['kolektor_id'],
-                                            'nop' => $s['nop'],
+                                            'jml_op' => $s['jml_op'] ?? $s['nop'] ?? 0,
                                             'realisasi' => $s['realisasi']
                                         ]) ?>)' 
                                                 class="h-8 w-8 rounded-lg bg-indigo-500/10 hover:bg-indigo-500 text-indigo-400 hover:text-white flex items-center justify-center border border-indigo-500/20 transition-all cursor-pointer"
@@ -250,11 +257,20 @@
             <?= csrf_field() ?>
             <input type="hidden" id="form-setor-id" name="realisasi_dsh_id" value="">
 
-            <!-- Tanggal Bayar -->
-            <div class="space-y-1.5">
-                <label for="form-tgl" class="text-xs font-semibold text-slate-300">Tanggal Bayar <span class="text-rose-500">*</span></label>
-                <input type="date" id="form-tgl" name="tgl_bayar" required value="<?= date('Y-m-d') ?>"
-                       class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Tahun Pajak -->
+                <div class="space-y-1.5">
+                    <label for="form-tahun" class="text-xs font-semibold text-slate-300">Tahun Pajak <span class="text-rose-500">*</span></label>
+                    <input type="number" id="form-tahun" name="tahun" required min="2020" max="2099" value="<?= $selectedYear ?: $currentYear ?>"
+                           class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 font-bold font-mono">
+                </div>
+
+                <!-- Tanggal Bayar -->
+                <div class="space-y-1.5">
+                    <label for="form-tgl" class="text-xs font-semibold text-slate-300">Tanggal Bayar <span class="text-rose-500">*</span></label>
+                    <input type="date" id="form-tgl" name="tgl_bayar" required value="<?= date('Y-m-d') ?>"
+                           class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40">
+                </div>
             </div>
 
             <!-- Pilih Kolektor (searchable select dropdown) -->
@@ -263,18 +279,18 @@
                 <select id="form-kolektor" name="kolektor_id" required class="w-full select2-el" style="width: 100%;">
                     <option value="">-- Pilih Kolektor --</option>
                     <?php foreach ($kolektors as $col): ?>
-                        <option value="<?= $col['kolektor_id'] ?>">
+                        <option value="<?= $col['kolektor_id'] ?>" data-tahun="<?= esc($col['tahun']) ?>">
                             <?= esc($col['nm_kolektor']) ?> - <?= esc($col['nm_desa']) ?> (Th. <?= esc($col['tahun']) ?>)
                         </option>
                     <?php endforeach; ?>
                 </select>
             </div>
 
-            <!-- NOP -->
+            <!-- Jumlah OP (Jml OP) -->
             <div class="space-y-1.5">
-                <label for="form-nop" class="text-xs font-semibold text-slate-300">NOP <span class="text-rose-500">*</span></label>
-                <input type="number" id="form-nop" name="nop" required placeholder="Masukkan NOP" min="1"
-                       class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40">
+                <label for="form-jml-op" class="text-xs font-semibold text-slate-300">Jumlah OP (Jml OP) <span class="text-rose-500">*</span></label>
+                <input type="number" id="form-jml-op" name="jml_op" required placeholder="Masukkan Jumlah OP" min="1"
+                       class="w-full rounded-2xl bg-slate-900 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 font-mono font-semibold">
             </div>
 
             <!-- Nominal Setoran -->
@@ -318,23 +334,36 @@
     const setorModal = document.getElementById('setor-modal');
     const modalTitleText = document.getElementById('modal-title-text');
     const formSetorId = document.getElementById('form-setor-id');
+    const formTahunInput = document.getElementById('form-tahun');
     const formKolektorSelect = document.getElementById('form-kolektor');
     const formNominalInput = document.getElementById('form-nominal');
     const formTglInput = document.getElementById('form-tgl');
-    const formNopInput = document.getElementById('form-nop');
+    const formJmlOpInput = document.getElementById('form-jml-op');
 
     // Initialize Select2 dropdown
     $(document).ready(function() {
         $('.select2-el').select2({
             dropdownParent: $('#setor-modal')
         });
+
+        // Auto-suggest collector year when selecting in add mode
+        $('#form-kolektor').on('select2:select', function(e) {
+            if (!formSetorId.value) {
+                const selectedOpt = $(this).find(':selected');
+                const colYear = selectedOpt.data('tahun');
+                if (colYear) {
+                    formTahunInput.value = colYear;
+                }
+            }
+        });
     });
 
     function openSetorModal() {
         formSetorId.value = '';
-        formNominalInput.value = '';
-        formNopInput.value = '';
+        formTahunInput.value = '<?= $selectedYear ?: $currentYear ?>';
         formTglInput.value = '<?= date('Y-m-d') ?>';
+        formJmlOpInput.value = '';
+        formNominalInput.value = '';
         
         // Reset select2 value
         $(formKolektorSelect).val('').trigger('change');
@@ -345,8 +374,9 @@
 
     function openEditModal(data) {
         formSetorId.value = data.realisasi_dsh_id;
+        formTahunInput.value = data.tahun;
         formTglInput.value = data.tgl_bayar;
-        formNopInput.value = data.nop;
+        formJmlOpInput.value = data.jml_op || data.nop || '';
         formNominalInput.value = data.realisasi;
         
         // Populate select2 and trigger change
