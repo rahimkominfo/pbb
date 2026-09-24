@@ -135,6 +135,13 @@
                         <i class="fa-solid fa-gift w-3 text-center"></i>
                         <span>Insentif</span>
                     </a>
+
+                    <!-- Sub Menu Upah Kerja -->
+                    <a href="<?= base_url('admin/upah-kerja') ?>" 
+                       class="flex items-center gap-3 pl-9 pr-3 py-2 rounded-xl text-xs font-semibold transition-all duration-300 <?= service('router')->controllerName() === '\App\Controllers\Admin' && service('router')->methodName() === 'upahKerja' ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20' : 'text-slate-400 hover:bg-slate-800/60 hover:text-white' ?>">
+                        <i class="fa-solid fa-money-bill-wave w-3 text-center"></i>
+                        <span>Upah Kerja</span>
+                    </a>
                     
                     <a href="<?= base_url('admin/pengguna') ?>" 
                        class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-300 <?= service('router')->controllerName() === '\App\Controllers\Admin' && service('router')->methodName() === 'pengguna' ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20' : 'text-slate-400 hover:bg-slate-800/60 hover:text-white' ?>">
@@ -258,6 +265,9 @@
                 </a>
                 <a href="<?= base_url('admin/insentif') ?>" class="flex items-center gap-3 pl-9 pr-3 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-800">
                     <i class="fa-solid fa-gift w-3 text-center"></i> Insentif
+                </a>
+                <a href="<?= base_url('admin/upah-kerja') ?>" class="flex items-center gap-3 pl-9 pr-3 py-2 rounded-xl text-xs font-semibold <?= service('router')->controllerName() === '\App\Controllers\Admin' && service('router')->methodName() === 'upahKerja' ? 'text-indigo-400 font-bold bg-indigo-600/10' : 'text-slate-300' ?> hover:bg-slate-800">
+                    <i class="fa-solid fa-money-bill-wave w-3 text-center"></i> Upah Kerja
                 </a>
                 <a href="<?= base_url('admin/pengguna') ?>" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-300 hover:bg-slate-800">
                     <i class="fa-solid fa-user-shield w-4 text-center"></i> Pengguna

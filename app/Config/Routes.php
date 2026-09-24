@@ -48,6 +48,12 @@ $routes->group('admin', function(RouteCollection $routes) {
     // Laporan Insentif
     $routes->get('insentif', 'Admin::insentif');
     $routes->get('insentif/export', 'Admin::exportInsentif');
+
+    // Laporan Upah Kerja
+    $routes->get('upah-kerja', 'Admin::upahKerja');
+    $routes->get('upah-kerja/export', 'Admin::exportUpahKerja');
+    $routes->post('upah-kerja/simpan-tahap', 'Admin::simpanTahapUpahKerja');
+    $routes->post('upah-kerja/hapus-tahap', 'Admin::hapusTahapUpahKerja');
 });
 
 

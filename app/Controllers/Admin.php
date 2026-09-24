@@ -1597,4 +1597,567 @@ class Admin extends BaseController
         <?php
         exit;
     }
+
+    /**
+     * Helper to compute dynamic upah kerja calculations including carry-over and threshold rules.
+     */
+    private function calculateUpahKerjaData(
+        int $selectedYear,
+        string $tglAwal,
+        string $tglAkhir,
+        bool $isFinal,
+        string $selectedKec = '',
+        string $selectedDesa = '',
+        string $search = '',
+        string $statusBayar = 'all'
+    ): array {
+        // 1. Fetch carry-over balance (op_carry_masuk) for each collector before $tglAwal in $selectedYear
+        $carryOverMap = [];
+
+        if (!empty($tglAwal)) {
+            // Check if there is any previously saved tahap in trn_upah_kerja_tahap before $tglAwal
+            $prevTahap = $this->db->table('trn_upah_kerja_tahap')
+                ->where('tahun', $selectedYear)
+                ->where('tgl_akhir <', $tglAwal)
+                ->orderBy('tgl_akhir', 'DESC')
+                ->get()
+                ->getRowArray();
+
+            if ($prevTahap) {
+                $prevDetails = $this->db->table('trn_upah_kerja_detail')
+                    ->where('tahap_id', $prevTahap['tahap_id'])
+                    ->get()
+                    ->getResultArray();
+                foreach ($prevDetails as $pd) {
+                    $carryOverMap[$pd['kolektor_id']] = (int)$pd['op_carry_keluar'];
+                }
+            } else {
+                // Dynamic simulation: check transactions before $tglAwal in the same year
+                $yearStart = "$selectedYear-01-01";
+                if ($tglAwal > $yearStart) {
+                    $prevReal = $this->db->table('trn_realisasi_dsh')
+                        ->select('kolektor_id, SUM(jml_op) as total_prior_op')
+                        ->where('tahun', $selectedYear)
+                        ->where('kolektor_id IS NOT NULL')
+                        ->where('tgl_bayar >=', $yearStart)
+                        ->where('tgl_bayar <', $tglAwal)
+                        ->groupBy('kolektor_id')
+                        ->get()
+                        ->getResultArray();
+                    foreach ($prevReal as $pr) {
+                        $priorOp = (int)$pr['total_prior_op'];
+                        // If prior deposits was <= 10 OP, consider it as carry-over
+                        if ($priorOp <= 10 && $priorOp > 0) {
+                            $carryOverMap[$pr['kolektor_id']] = $priorOp;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Query collectors and their OP in [tglAwal, tglAkhir]
+        $joinCondition = 'r.kolektor_id = c.kolektor_id AND r.tahun = c.tahun';
+        if (!empty($tglAwal)) {
+            $joinCondition .= ' AND r.tgl_bayar >= ' . $this->db->escape($tglAwal);
+        }
+        if (!empty($tglAkhir)) {
+            $joinCondition .= ' AND r.tgl_bayar <= ' . $this->db->escape($tglAkhir);
+        }
+
+        $builder = $this->db->table('mst_kolektor c')
+            ->select('
+                k.kecamatan_id,
+                k.nm_kecamatan,
+                d.desa_id,
+                d.nm_desa,
+                c.kolektor_id,
+                c.kd_kolektor,
+                c.nm_kolektor,
+                c.norek_kolektor,
+                COALESCE(SUM(r.jml_op), 0) AS op_periode_ini,
+                COALESCE(SUM(r.realisasi), 0) AS nominal_periode_ini
+            ')
+            ->join('mst_desa d', 'c.desa_id = d.desa_id')
+            ->join('mst_kecamatan k', 'd.kecamatan_id = k.kecamatan_id')
+            ->join('trn_realisasi_dsh r', $joinCondition, 'left')
+            ->where('c.tahun', $selectedYear);
+
+        if (!empty($selectedKec)) {
+            $builder->where('d.kecamatan_id', $selectedKec);
+        }
+
+        if (!empty($selectedDesa)) {
+            $builder->where('c.desa_id', $selectedDesa);
+        }
+
+        if (!empty($search)) {
+            $builder->like('c.nm_kolektor', $search);
+        }
+
+        $builder->groupBy('c.kolektor_id, k.kecamatan_id, k.nm_kecamatan, d.desa_id, d.nm_desa, c.kd_kolektor, c.nm_kolektor, c.norek_kolektor');
+        $builder->orderBy('k.nm_kecamatan', 'ASC')
+            ->orderBy('d.nm_desa', 'ASC')
+            ->orderBy('c.nm_kolektor', 'ASC');
+
+        $kolektors = $builder->get()->getResultArray();
+
+        $minThreshold = 10;
+        $dataReport = [];
+        $totalKolektorBerOp = 0;
+        $totalKolektorSiapCair = 0;
+        $totalKolektorDitunda = 0;
+        $totalOpCair = 0;
+        $totalOpTunda = 0;
+        $totalOpAkumulasi = 0;
+        $totalNominalCair = 0.0;
+
+        foreach ($kolektors as $col) {
+            $colId = $col['kolektor_id'];
+            $opCarryMasuk = $carryOverMap[$colId] ?? 0;
+            $opPeriodeIni = (int)$col['op_periode_ini'];
+            $opTotal = $opCarryMasuk + $opPeriodeIni;
+
+            // Determine payment eligibility
+            if ($isFinal) {
+                // Final payout (Desember / Tutup Tahun) -> Pay 100% of all OP > 0
+                if ($opTotal > 0) {
+                    $status = 'DIBAYARKAN';
+                    $opDibayarkan = $opTotal;
+                    $opCarryKeluar = 0;
+                } else {
+                    $status = 'TIDAK_ADA_OP';
+                    $opDibayarkan = 0;
+                    $opCarryKeluar = 0;
+                }
+            } else {
+                // Regular payout -> Threshold > 10 OP
+                if ($opTotal > $minThreshold) {
+                    $status = 'DIBAYARKAN';
+                    $opDibayarkan = $opTotal;
+                    $opCarryKeluar = 0;
+                } elseif ($opTotal > 0) {
+                    $status = 'DITUNDA';
+                    $opDibayarkan = 0;
+                    $opCarryKeluar = $opTotal;
+                } else {
+                    $status = 'TIDAK_ADA_OP';
+                    $opDibayarkan = 0;
+                    $opCarryKeluar = 0;
+                }
+            }
+
+            // Filter by status_bayar if requested
+            if ($statusBayar === 'dibayarkan' && $status !== 'DIBAYARKAN') {
+                continue;
+            }
+            if ($statusBayar === 'ditunda' && $status !== 'DITUNDA') {
+                continue;
+            }
+            if ($statusBayar === 'has_op' && $opTotal <= 0) {
+                continue;
+            }
+
+            if ($opTotal > 0) {
+                $totalKolektorBerOp++;
+                $totalOpAkumulasi += $opTotal;
+            }
+            if ($status === 'DIBAYARKAN') {
+                $totalKolektorSiapCair++;
+                $totalOpCair += $opDibayarkan;
+                $totalNominalCair += (float)$col['nominal_periode_ini'];
+            } elseif ($status === 'DITUNDA') {
+                $totalKolektorDitunda++;
+                $totalOpTunda += $opCarryKeluar;
+            }
+
+            $col['op_carry_masuk']     = $opCarryMasuk;
+            $col['op_periode_ini']     = $opPeriodeIni;
+            $col['op_total_akumulasi'] = $opTotal;
+            $col['status_bayar']       = $status;
+            $col['op_dibayarkan']      = $opDibayarkan;
+            $col['op_carry_keluar']    = $opCarryKeluar;
+
+            $dataReport[] = $col;
+        }
+
+        return [
+            'dataReport'            => $dataReport,
+            'totalKolektor'         => count($dataReport),
+            'totalKolektorBerOp'    => $totalKolektorBerOp,
+            'totalKolektorSiapCair' => $totalKolektorSiapCair,
+            'totalKolektorDitunda'  => $totalKolektorDitunda,
+            'totalOpCair'           => $totalOpCair,
+            'totalOpTunda'          => $totalOpTunda,
+            'totalOpAkumulasi'      => $totalOpAkumulasi,
+            'totalNominalCair'      => $totalNominalCair,
+        ];
+    }
+
+    /**
+     * Laporan Upah Kerja Kolektor.
+     */
+    public function upahKerja()
+    {
+        $years = $this->getAvailableYears();
+        $selectedYear = $this->request->getGet('tahun');
+        if (!$selectedYear || !in_array((int)$selectedYear, $years)) {
+            $dbYears = $this->db->table('trn_target')->select('DISTINCT(tahun) as tahun')->orderBy('tahun', 'DESC')->get()->getResultArray();
+            $selectedYear = !empty($dbYears) ? (int)$dbYears[0]['tahun'] : 2026;
+        } else {
+            $selectedYear = (int)$selectedYear;
+        }
+
+        $tglAwal = $this->request->getGet('tgl_awal') ?? '';
+        $tglAkhir = $this->request->getGet('tgl_akhir') ?? '';
+        $isFinal = (bool)$this->request->getGet('is_final');
+        $selectedKec = $this->request->getGet('kecamatan_id') ?? '';
+        $selectedDesa = $this->request->getGet('desa_id') ?? '';
+        $search = $this->request->getGet('search') ?? '';
+        $statusBayar = $this->request->getGet('status_bayar') ?? 'all';
+
+        // Fetch kecamatans for filter dropdown
+        $kecamatans = $this->db->table('mst_kecamatan')->orderBy('nm_kecamatan', 'ASC')->get()->getResultArray();
+
+        // Fetch desas for filter dropdown if kecamatan is selected
+        $desas = [];
+        if (!empty($selectedKec)) {
+            $desas = $this->db->table('mst_desa')
+                ->where('kecamatan_id', $selectedKec)
+                ->orderBy('nm_desa', 'ASC')
+                ->get()
+                ->getResultArray();
+        }
+
+        // Fetch saved tahap list for history
+        $tahapList = $this->db->table('trn_upah_kerja_tahap')
+            ->where('tahun', $selectedYear)
+            ->orderBy('tgl_awal', 'ASC')
+            ->get()
+            ->getResultArray();
+
+        // Calculate upah kerja data
+        $calculation = $this->calculateUpahKerjaData(
+            $selectedYear,
+            $tglAwal,
+            $tglAkhir,
+            $isFinal,
+            $selectedKec,
+            $selectedDesa,
+            $search,
+            $statusBayar
+        );
+
+        return view('admin/upah_kerja', [
+            'years'                 => $years,
+            'selectedYear'          => $selectedYear,
+            'tglAwal'               => $tglAwal,
+            'tglAkhir'              => $tglAkhir,
+            'isFinal'               => $isFinal,
+            'selectedKec'           => $selectedKec,
+            'selectedDesa'          => $selectedDesa,
+            'search'                => $search,
+            'statusBayar'           => $statusBayar,
+            'kecamatans'            => $kecamatans,
+            'desas'                 => $desas,
+            'tahapList'             => $tahapList,
+            'dataReport'            => $calculation['dataReport'],
+            'totalKolektor'         => $calculation['totalKolektor'],
+            'totalKolektorBerOp'    => $calculation['totalKolektorBerOp'],
+            'totalKolektorSiapCair' => $calculation['totalKolektorSiapCair'],
+            'totalKolektorDitunda'  => $calculation['totalKolektorDitunda'],
+            'totalOpCair'           => $calculation['totalOpCair'],
+            'totalOpTunda'          => $calculation['totalOpTunda'],
+            'totalOpAkumulasi'      => $calculation['totalOpAkumulasi'],
+            'totalNominalCair'      => $calculation['totalNominalCair'],
+        ]);
+    }
+
+    /**
+     * Export Laporan Upah Kerja to Excel format (.xls).
+     */
+    public function exportUpahKerja()
+    {
+        $years = $this->getAvailableYears();
+        $selectedYear = $this->request->getGet('tahun');
+        if (!$selectedYear || !in_array((int)$selectedYear, $years)) {
+            $dbYears = $this->db->table('trn_target')->select('DISTINCT(tahun) as tahun')->orderBy('tahun', 'DESC')->get()->getResultArray();
+            $selectedYear = !empty($dbYears) ? (int)$dbYears[0]['tahun'] : 2026;
+        } else {
+            $selectedYear = (int)$selectedYear;
+        }
+
+        $tglAwal = $this->request->getGet('tgl_awal') ?? '';
+        $tglAkhir = $this->request->getGet('tgl_akhir') ?? '';
+        $isFinal = (bool)$this->request->getGet('is_final');
+        $selectedKec = $this->request->getGet('kecamatan_id') ?? '';
+        $selectedDesa = $this->request->getGet('desa_id') ?? '';
+        $search = $this->request->getGet('search') ?? '';
+        $statusBayar = $this->request->getGet('status_bayar') ?? 'all';
+
+        // Filter labels for meta description
+        $namaKecamatan = 'Semua Kecamatan';
+        if (!empty($selectedKec)) {
+            $kecRow = $this->db->table('mst_kecamatan')->where('kecamatan_id', $selectedKec)->get()->getRowArray();
+            if ($kecRow) {
+                $namaKecamatan = $kecRow['nm_kecamatan'];
+            }
+        }
+
+        $namaDesa = 'Semua Desa';
+        if (!empty($selectedDesa)) {
+            $desaRow = $this->db->table('mst_desa')->where('desa_id', $selectedDesa)->get()->getRowArray();
+            if ($desaRow) {
+                $namaDesa = $desaRow['nm_desa'];
+            }
+        }
+
+        // Calculate data
+        $calculation = $this->calculateUpahKerjaData(
+            $selectedYear,
+            $tglAwal,
+            $tglAkhir,
+            $isFinal,
+            $selectedKec,
+            $selectedDesa,
+            $search,
+            $statusBayar
+        );
+        $dataReport = $calculation['dataReport'];
+
+        $filename = "laporan-upah-kerja-" . $selectedYear;
+        if (!empty($tglAwal) && !empty($tglAkhir)) {
+            $filename .= "-periode-" . $tglAwal . "-sd-" . $tglAkhir;
+        } elseif (!empty($tglAwal)) {
+            $filename .= "-dari-" . $tglAwal;
+        } elseif (!empty($tglAkhir)) {
+            $filename .= "-sampai-" . $tglAkhir;
+        }
+        if ($isFinal) {
+            $filename .= "-final-desember";
+        }
+        $filename .= ".xls";
+
+        // Set headers for Excel download
+        header("Content-Type: application/vnd.ms-excel; charset=utf-8");
+        header("Content-Disposition: attachment; filename=" . $filename);
+        header("Pragma: no-cache");
+        header("Expires: 0");
+
+        ?>
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+            <meta http-equiv="content-type" content="text/html; charset=utf-8">
+            <style>
+                table {
+                    border-collapse: collapse;
+                    width: 100%;
+                }
+                th {
+                    background-color: #4F46E5;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                    border: 1px solid #D1D5DB;
+                    padding: 8px;
+                    text-align: left;
+                }
+                td {
+                    border: 1px solid #D1D5DB;
+                    padding: 8px;
+                    text-align: left;
+                }
+                .number {
+                    mso-number-format: "\#\,\#\#0";
+                    text-align: right;
+                }
+                .text-center {
+                    text-align: center;
+                }
+                .text-right {
+                    text-align: right;
+                }
+                .header-title {
+                    font-size: 16px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                }
+                .header-meta {
+                    font-size: 12px;
+                    margin-bottom: 20px;
+                    color: #4B5563;
+                }
+                .status-cair {
+                    color: #059669;
+                    font-weight: bold;
+                }
+                .status-tunda {
+                    color: #D97706;
+                    font-weight: bold;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header-title">LAPORAN UPAH KERJA KOLEKTOR PBB (BERTAHAP & CARRY-OVER)</div>
+            <div class="header-meta">
+                Tahun Target: <?= $selectedYear ?><br>
+                Rentang Tanggal Bayar: <?= !empty($tglAwal) && !empty($tglAkhir) ? date('d/m/Y', strtotime($tglAwal)) . ' s/d ' . date('d/m/Y', strtotime($tglAkhir)) : (!empty($tglAwal) ? 'Mulai ' . date('d/m/Y', strtotime($tglAwal)) : (!empty($tglAkhir) ? 'Sampai ' . date('d/m/Y', strtotime($tglAkhir)) : 'Semua Periode')) ?><br>
+                Jenis Pembayaran: <?= $isFinal ? 'Tahap Terakhir (Pelunasan Akhir Tahun / Desember - Bebas Batas Minimal 10 OP)' : 'Tahap Reguler (Ambang Batas Minimal > 10 OP)' ?><br>
+                Kecamatan: <?= esc($namaKecamatan) ?><br>
+                Desa: <?= esc($namaDesa) ?><br>
+                Tanggal Cetak: <?= date('d-m-Y H:i:s') ?><br>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 40px; text-align: center;">No</th>
+                        <th>Nama Kecamatan</th>
+                        <th>Nama Desa</th>
+                        <th>Nama Kolektor</th>
+                        <th>No. Rekening Kolektor</th>
+                        <th style="text-align: right;">OP Bawaan Lalu</th>
+                        <th style="text-align: right;">OP Periode Ini</th>
+                        <th style="text-align: right;">Total Akumulasi OP</th>
+                        <th style="text-align: center;">Status Pembayaran</th>
+                        <th style="text-align: right;">OP Dibayarkan</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php 
+                    $no = 1;
+                    $totalCarryMasuk = 0;
+                    $totalPeriodeIni = 0;
+                    $totalAkumulasi = 0;
+                    $totalDibayarkan = 0;
+                    foreach ($dataReport as $row): 
+                        $totalCarryMasuk += (int)$row['op_carry_masuk'];
+                        $totalPeriodeIni += (int)$row['op_periode_ini'];
+                        $totalAkumulasi  += (int)$row['op_total_akumulasi'];
+                        $totalDibayarkan += (int)$row['op_dibayarkan'];
+                    ?>
+                        <tr>
+                            <td class="text-center"><?= $no++ ?></td>
+                            <td><?= esc($row['nm_kecamatan']) ?></td>
+                            <td><?= esc($row['nm_desa']) ?></td>
+                            <td><?= esc($row['nm_kolektor']) ?></td>
+                            <td style="mso-number-format:'\@';"><?= $row['norek_kolektor'] ? esc($row['norek_kolektor']) : '-' ?></td>
+                            <td class="number"><?= (int)$row['op_carry_masuk'] ?></td>
+                            <td class="number"><?= (int)$row['op_periode_ini'] ?></td>
+                            <td class="number"><?= (int)$row['op_total_akumulasi'] ?></td>
+                            <td class="text-center">
+                                <?php if ($row['status_bayar'] === 'DIBAYARKAN'): ?>
+                                    <span class="status-cair"><?= $isFinal ? 'DIBAYARKAN (FINAL)' : 'DIBAYARKAN' ?></span>
+                                <?php elseif ($row['status_bayar'] === 'DITUNDA'): ?>
+                                    <span class="status-tunda">DITUNDA (&le; 10 OP)</span>
+                                <?php else: ?>
+                                    <span>-</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="number" style="font-weight: bold;"><?= (int)$row['op_dibayarkan'] ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <!-- Total Row -->
+                    <tr style="font-weight: bold; background-color: #F3F4F6;">
+                        <td colspan="5" style="text-align: right;">Total:</td>
+                        <td class="number"><?= $totalCarryMasuk ?></td>
+                        <td class="number"><?= $totalPeriodeIni ?></td>
+                        <td class="number"><?= $totalAkumulasi ?></td>
+                        <td class="text-center">Total Cair</td>
+                        <td class="number"><?= $totalDibayarkan ?></td>
+                    </tr>
+                </tbody>
+            </table>
+        </body>
+        </html>
+        <?php
+        exit;
+    }
+
+    /**
+     * Simpan / Kunci Tahap Pembayaran Upah Kerja.
+     */
+    public function simpanTahapUpahKerja()
+    {
+        $tahun = (int)($this->request->getPost('tahun') ?? 2026);
+        $namaTahap = trim($this->request->getPost('nama_tahap') ?? '');
+        $tglAwal = $this->request->getPost('tgl_awal') ?? '';
+        $tglAkhir = $this->request->getPost('tgl_akhir') ?? '';
+        $isFinal = (bool)$this->request->getPost('is_final');
+
+        if (empty($namaTahap) || empty($tglAwal) || empty($tglAkhir)) {
+            return redirect()->back()->with('error', 'Nama tahap, tanggal awal, dan tanggal akhir wajib diisi.');
+        }
+
+        if ($tglAwal > $tglAkhir) {
+            return redirect()->back()->with('error', 'Tanggal awal tidak boleh melebihi tanggal akhir.');
+        }
+
+        // Calculate all collectors without filter to persist full state
+        $res = $this->calculateUpahKerjaData($tahun, $tglAwal, $tglAkhir, $isFinal, '', '', '', 'all');
+        $dataReport = $res['dataReport'];
+
+        $this->db->transStart();
+
+        $tahapData = [
+            'tahun'          => $tahun,
+            'nama_tahap'     => $namaTahap,
+            'tgl_awal'       => $tglAwal,
+            'tgl_akhir'      => $tglAkhir,
+            'is_final'       => $isFinal ? 1 : 0,
+            'total_kolektor' => $res['totalKolektorSiapCair'],
+            'total_op_cair'  => $res['totalOpCair'],
+            'total_op_tunda' => $res['totalOpTunda'],
+            'created_by'     => session()->get('username') ?? 'Admin',
+            'created_at'     => date('Y-m-d H:i:s'),
+        ];
+
+        $this->db->table('trn_upah_kerja_tahap')->insert($tahapData);
+        $tahapId = $this->db->insertID();
+
+        // Batch insert details
+        $batchDetails = [];
+        foreach ($dataReport as $row) {
+            $batchDetails[] = [
+                'tahap_id'           => $tahapId,
+                'kolektor_id'        => $row['kolektor_id'],
+                'op_carry_masuk'     => $row['op_carry_masuk'],
+                'op_periode_ini'     => $row['op_periode_ini'],
+                'op_total_akumulasi' => $row['op_total_akumulasi'],
+                'status_bayar'       => $row['status_bayar'] === 'DIBAYARKAN' ? 'DIBAYARKAN' : 'DITUNDA',
+                'op_dibayarkan'      => $row['op_dibayarkan'],
+                'op_carry_keluar'    => $row['op_carry_keluar'],
+            ];
+        }
+
+        if (!empty($batchDetails)) {
+            $this->db->table('trn_upah_kerja_detail')->insertBatch($batchDetails);
+        }
+
+        $this->db->transComplete();
+
+        if ($this->db->transStatus() === false) {
+            return redirect()->back()->with('error', 'Gagal menyimpan tahap pembayaran.');
+        }
+
+        return redirect()->to(base_url('admin/upah-kerja?tahun=' . $tahun . '&tgl_awal=' . $tglAwal . '&tgl_akhir=' . $tglAkhir . ($isFinal ? '&is_final=1' : '')))
+            ->with('success', 'Tahap pembayaran "' . esc($namaTahap) . '" berhasil disimpan dan dikunci.');
+    }
+
+    /**
+     * Hapus / Batalkan Tahap Pembayaran Upah Kerja.
+     */
+    public function hapusTahapUpahKerja()
+    {
+        $tahapId = (int)$this->request->getPost('tahap_id');
+        if ($tahapId > 0) {
+            $tahap = $this->db->table('trn_upah_kerja_tahap')->where('tahap_id', $tahapId)->get()->getRowArray();
+            if ($tahap) {
+                $tahun = $tahap['tahun'];
+                $this->db->table('trn_upah_kerja_tahap')->where('tahap_id', $tahapId)->delete();
+                return redirect()->to(base_url('admin/upah-kerja?tahun=' . $tahun))
+                    ->with('success', 'Tahap pembayaran "' . esc($tahap['nama_tahap']) . '" berhasil dihapus.');
+            }
+        }
+        return redirect()->back()->with('error', 'ID tahap tidak valid.');
+    }
 }
+
